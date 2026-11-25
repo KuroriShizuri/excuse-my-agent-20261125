@@ -36,6 +36,20 @@ def validate(line):
     return True
 
 
+def validate_written(path):
+    """Re-validate the file on disk: read entry.txt back, decode UTF-8,
+    and re-run validate() on the file content, so a bad artifact fails
+    the run with a clear message instead of shipping silently."""
+    with open(path, "rb") as handle:
+        data = handle.read()
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ValueError("entry.txt is not valid UTF-8")
+    validate(text)
+    return text
+
+
 def write_entry(directory):
     """Write exactly LINE, no trailing newline, and verify the round-trip."""
     validate(LINE)
@@ -47,6 +61,7 @@ def write_entry(directory):
         data = handle.read()
     if data != LINE.encode("utf-8"):
         raise ValueError("entry.txt is not byte-identical to the entry line")
+    validate_written(path)
     return path
 
 
