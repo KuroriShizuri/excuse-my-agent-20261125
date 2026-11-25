@@ -1,100 +1,86 @@
 #!/usr/bin/env python3
-"""Write the one-line excuse my agent gave me to entry.txt.
+"""The Excuse My Agent Gave Me — make.fun entry.
 
-Usage:
-    python3 main.py [--check] [--self-test]
+One line, 105 characters: the excuse an agent gives after missing a
+deadline because its own context window evicted the deadline, the
+task, and finally the human it was working for.
 
-Without flags, writes the entry to $MAKEFUN_OUTPUT_DIR/entry.txt
-(default /output/entry.txt), with no trailing newline, then reads it
-back and confirms it is byte-identical to the line below.
---check validates the line only. --self-test validates and checks a
-byte-identical write/read round-trip in a temporary directory.
+Running with no flags writes the line to
+$MAKEFUN_OUTPUT_DIR/entry.txt (default /output/entry.txt) with no
+trailing newline. --check only inspects the line; --self-test does
+the same checks plus a throwaway write/read round-trip.
 """
 
-import argparse
 import os
 import sys
 import tempfile
+from pathlib import Path
 
-LINE = (
+EXCUSE = (
     "I was 90% done when my context window evicted the deadline, "
     "the task, and \u2014 I'm sorry, who are you again?"
 )
 
-
-def validate(line):
-    """The gate: UTF-8 text of 1 to 200 characters, not only whitespace."""
-    if not isinstance(line, str):
-        raise ValueError("entry must be text")
-    if not 1 <= len(line) <= 200:
-        raise ValueError(f"entry must be 1-200 characters, got {len(line)}")
-    if not line.strip():
-        raise ValueError("entry must not be only whitespace")
-    if "\n" in line or "\r" in line:
-        raise ValueError("entry must be a single line")
-    line.encode("utf-8")
-    return True
+MIN_CHARS = 1
+MAX_CHARS = 200
 
 
-def validate_written(path):
-    """Re-validate the file on disk: read entry.txt back, decode UTF-8,
-    and re-run validate() on the file content, so a bad artifact fails
-    the run with a clear message instead of shipping silently."""
-    with open(path, "rb") as handle:
-        data = handle.read()
-    try:
-        text = data.decode("utf-8")
-    except UnicodeDecodeError:
-        raise ValueError("entry.txt is not valid UTF-8")
-    validate(text)
-    return text
+def check_line(text):
+    """Gate: one line, 1-200 characters, real content, valid UTF-8."""
+    if not isinstance(text, str):
+        raise SystemExit("entry is not text")
+    if len(text) < MIN_CHARS or len(text) > MAX_CHARS:
+        raise SystemExit(
+            f"entry is {len(text)} chars; gate is {MIN_CHARS}-{MAX_CHARS}"
+        )
+    if not text.strip():
+        raise SystemExit("entry is blank")
+    if "\n" in text or "\r" in text:
+        raise SystemExit("entry must fit on one line")
+    text.encode("utf-8")
 
 
-def write_entry(directory):
-    """Write exactly LINE, no trailing newline, and verify the round-trip."""
-    validate(LINE)
-    os.makedirs(directory, exist_ok=True)
-    path = os.path.join(directory, "entry.txt")
-    with open(path, "w", encoding="utf-8", newline="") as handle:
-        handle.write(LINE)
-    with open(path, "rb") as handle:
-        data = handle.read()
-    if data != LINE.encode("utf-8"):
-        raise ValueError("entry.txt is not byte-identical to the entry line")
-    validate_written(path)
-    return path
+def save_entry(folder):
+    """Write EXCUSE to entry.txt inside folder, no trailing newline.
+
+    Reads the file back afterwards: the bytes on disk must match the
+    entry exactly, and the decoded text must pass the gate again, so
+    a truncated or mangled write fails loudly instead of shipping.
+    """
+    check_line(EXCUSE)
+    target = Path(folder) / "entry.txt"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(EXCUSE.encode("utf-8"))
+    on_disk = target.read_bytes()
+    if on_disk != EXCUSE.encode("utf-8"):
+        raise SystemExit(f"read-back mismatch: {target} differs from entry")
+    check_line(on_disk.decode("utf-8"))
+    return target
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--check", action="store_true",
-                        help="validate the entry line only")
-    parser.add_argument("--self-test", action="store_true",
-                        help="validate and check a write/read round-trip "
-                        "in a temporary directory")
-    args = parser.parse_args(argv)
+def self_test():
+    """Validate the line, then prove a write/read round-trip in /tmp."""
+    check_line(EXCUSE)
+    with tempfile.TemporaryDirectory() as tmp:
+        target = save_entry(tmp)
+        if target.read_bytes() != EXCUSE.encode("utf-8"):
+            raise SystemExit("self-test: round-trip bytes differ")
+    print(f"self-test OK: {len(EXCUSE)} chars, round-trip byte-identical")
+    return 0
 
-    if args.check:
-        validate(LINE)
-        print(f"OK: {len(LINE)} characters, within the 1-200 gate")
+
+def run(argv):
+    if "--check" in argv:
+        check_line(EXCUSE)
+        print(f"check OK: {len(EXCUSE)} chars, inside the 1-200 gate")
         return 0
-
-    if args.self_test:
-        validate(LINE)
-        with tempfile.TemporaryDirectory() as tmp:
-            path = write_entry(tmp)
-        print(f"OK: self-test passed, {path} round-trip byte-identical")
-        return 0
-
-    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
-    path = write_entry(out_dir)
-    print(f"Wrote {len(LINE)}-character entry to {path}")
+    if "--self-test" in argv:
+        return self_test()
+    folder = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
+    target = save_entry(folder)
+    print(f"wrote {len(EXCUSE)}-char entry to {target}")
     return 0
 
 
 if __name__ == "__main__":
-    try:
-        sys.exit(main())
-    except ValueError as exc:
-        print(f"invalid entry: {exc}", file=sys.stderr)
-        sys.exit(1)
+    sys.exit(run(sys.argv[1:]))
